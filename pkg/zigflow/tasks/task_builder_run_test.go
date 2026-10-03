@@ -932,3 +932,69 @@ func TestRunTaskBuilderBuildWithoutWorker(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, fn)
 }
+
+// TestRunTaskBuilderRunWorkflowChildWorkflowOptions proves that the
+// childWorkflowOptions task metadata routes the child to another task queue,
+// and that without it the child stays on the parent's queue.
+func TestRunTaskBuilderRunWorkflowChildWorkflowOptions(t *testing.T) {
+	const childWorkflowName = "queue-child"
+
+	tests := []struct {
+		name     string
+		metadata map[string]any
+		expected string
+	}{
+		{
+			name: "task queue from metadata",
+			metadata: map[string]any{
+				"childWorkflowOptions": map[string]any{"taskQueue": "statistician-internal"},
+			},
+			expected: "statistician-internal",
+		},
+		{
+			name:     "no metadata keeps the parent's task queue",
+			metadata: nil,
+			expected: "default-test-taskqueue",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			task := &model.RunTask{
+				TaskBase: model.TaskBase{Metadata: tc.metadata},
+				Run: model.RunTaskConfiguration{
+					Await: new(true),
+					Workflow: &model.RunWorkflow{
+						Namespace: constDefaultNamespace,
+						Name:      childWorkflowName,
+						Version:   testConstRunWorkflowVersion,
+					},
+				},
+			}
+
+			builder, err := NewRunTaskBuilder(nil, task, "run-queue-task", nil, testEvents, nil)
+			require.NoError(t, err)
+
+			fn, err := builder.Build()
+			require.NoError(t, err)
+
+			var s testsuite.WorkflowTestSuite
+			env := s.NewTestWorkflowEnvironment()
+
+			env.RegisterWorkflowWithOptions(func(ctx workflow.Context, _ any, _ *utils.State) (any, error) {
+				return workflow.GetInfo(ctx).TaskQueueName, nil
+			}, workflow.RegisterOptions{Name: childWorkflowName})
+
+			env.RegisterWorkflowWithOptions(func(ctx workflow.Context) (any, error) {
+				return fn(ctx, nil, utils.NewState())
+			}, workflow.RegisterOptions{Name: "run-queue-host"})
+
+			env.ExecuteWorkflow("run-queue-host")
+			require.NoError(t, env.GetWorkflowError())
+
+			var result string
+			require.NoError(t, env.GetWorkflowResult(&result))
+			assert.Equal(t, tc.expected, result)
+		})
+	}
+}

@@ -25,6 +25,7 @@ import (
 	"github.com/zigflow/zigflow/pkg/utils"
 	"github.com/zigflow/zigflow/pkg/zigflow/activities"
 	"github.com/zigflow/zigflow/pkg/zigflow/flow"
+	"github.com/zigflow/zigflow/pkg/zigflow/metadata"
 	"go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/worker"
@@ -261,6 +262,11 @@ func (t *RunTaskBuilder) runWorkflow(ctx workflow.Context, input any, state *uti
 	opts := workflow.ChildWorkflowOptions{}
 	if !await {
 		opts.ParentClosePolicy = enums.PARENT_CLOSE_POLICY_ABANDON
+	}
+
+	if err := metadata.ApplyChildWorkflowOptions(&t.task.TaskBase, &opts); err != nil {
+		logger.Error("Error setting child workflow options", "task", t.GetTaskName(), "error", err)
+		return nil, err
 	}
 
 	ctx = workflow.WithChildOptions(ctx, opts)
